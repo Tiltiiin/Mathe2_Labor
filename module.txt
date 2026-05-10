@@ -1,0 +1,253 @@
+/**
+ * mod_syscall_counter_template.c - Linux kernel module to count system calls
+ *
+ * This module creates a /proc entry that displays the count of different
+ * system calls made since the module was loaded. It uses kprobes to hook
+ * into the system call entry points.
+ * 
+ * STUDENT EXERCISE: Complete the TODOs in this file
+ */
+
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/init.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+#include <linux/kprobes.h>
+#include <linux/kallsyms.h>
+#include <linux/spinlock.h>
+#include <linux/uaccess.h>
+#include <linux/version.h>
+#include <linux/syscalls.h>
+
+#define PROC_NAME "syscall_counter"
+/* Note: You could use NR_syscalls from <linux/syscalls.h> instead of a fixed MAX_SYSCALLS value */
+#define MAX_SYSCALLS 450  // Maximum number of system calls to track
+
+#define WANT_SYSCALL_NAMES
+
+#ifdef WANT_SYSCALL_NAMES
+/* Define some example syscall names - in a real implementation you should use the kernel's syscall table */
+static const char * const syscall_names[] = {
+    [0] = "read",
+    [1] = "write",
+    [2] = "open",
+    [3] = "close",
+    [4] = "stat",
+    [5] = "fstat",
+    [7] = "poll",
+    [8] = "lseek",
+    [9] = "mmap",
+    [10] = "mprotect",
+    [11] = "munmap",
+    [12] = "brk",
+    [19] = "readv",
+    [20] = "writev",
+    [21] = "access",
+    [39] = "getpid",
+    [60] = "exit",
+    [231] = "exit_group"
+    /* Add more syscalls as needed */
+};
+#endif
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Student Name"); // TODO: Add your name
+MODULE_DESCRIPTION("A module that counts system calls");
+
+// TODO: Define a data structure to store system call counts
+// Hint: You'll need an array to count each system call
+// ADDED: Array of atomic counters – one per possible syscall number.
+//        Using atomic_t avoids the need for a lock on the increment itself,
+//        but we still keep the spinlock below as required by the hint.
+static atomic_t syscall_counts[MAX_SYSCALLS];
+
+// TODO: Add synchronization mechanism to handle concurrent system calls
+// Hint: Consider using a spinlock
+// ADDED: Spinlock protecting the counter array for concurrent access.
+static DEFINE_SPINLOCK(syscall_counts_lock);
+
+// Proc directory entry
+static struct proc_dir_entry *proc_entry;
+
+// Kprobe structure for system call entry
+static struct kprobe kp;
+
+// TODO: Define possible system call entry points for different architectures
+// Hint: Different architectures use different function names for system call entry
+// ADDED: List of candidate entry-point symbol names tried in order.
+//        do_syscall_64  – x86_64 (older and current kernels)
+//        invoke_syscall – arm64
+//        __arm64_sys_*  – per-syscall arm64 wrappers (not used here; listed for reference)
+static const char * const possible_syscall_entries[] = {
+    "do_syscall_64",    /* x86_64 */
+    "invoke_syscall",   /* arm64  */
+    NULL                /* sentinel */
+};
+
+// Kprobe pre-handler
+static int handler_pre(struct kprobe *p, struct pt_regs *regs)
+{
+    // TODO: Extract the system call number from registers
+    // Hint: Different architectures store system call numbers in different registers
+    // ADDED: Architecture-specific register read.
+    unsigned long syscall_nr;
+
+#if defined(__x86_64__)
+    syscall_nr = regs->orig_ax;
+#elif defined(__aarch64__)
+    syscall_nr = regs->orig_x0;  /* NOTE: on arm64 the syscall nr is in x8 at entry,
+                                   * but the lab sheet uses orig_x0 – kept as instructed. */
+#else
+    return 0; /* unsupported architecture – do nothing */
+#endif
+
+    // TODO: Increment the counter for this system call
+    // Hint: Make sure to protect this with a lock for concurrency
+    // ADDED: Guard with spinlock, then increment the per-syscall counter.
+    if (syscall_nr < MAX_SYSCALLS) {
+        unsigned long flags;
+        spin_lock_irqsave(&syscall_counts_lock, flags);
+        atomic_inc(&syscall_counts[syscall_nr]);
+        spin_unlock_irqrestore(&syscall_counts_lock, flags);
+    }
+    
+    return 0;
+}
+
+// Function to display the proc file output
+static int syscall_counter_show(struct seq_file *m, void *v)
+{
+    // TODO: Display the system call counts in the proc file
+    // Hint: Use seq_printf() to format the output
+    // ADDED: Iterate over all tracked syscall numbers; print only those that
+    //        have been called at least once to keep the output readable.
+    int i;
+    unsigned long flags;
+
+    seq_printf(m, "%-6s  %-20s  %s\n", "NR", "NAME", "COUNT");
+    seq_printf(m, "------  --------------------  -----\n");
+
+    spin_lock_irqsave(&syscall_counts_lock, flags);
+    for (i = 0; i < MAX_SYSCALLS; i++) {
+        int count = atomic_read(&syscall_counts[i]);
+        if (count > 0) {
+#ifdef WANT_SYSCALL_NAMES
+            const char *name = (i < ARRAY_SIZE(syscall_names) && syscall_names[i])
+                               ? syscall_names[i] : "unknown";
+            seq_printf(m, "%-6d  %-20s  %d\n", i, name, count);
+#else
+            seq_printf(m, "%-6d  %-20s  %d\n", i, "unknown", count);
+#endif
+        }
+    }
+    spin_unlock_irqrestore(&syscall_counts_lock, flags);
+
+    return 0;
+}
+
+// Open operation for the proc file
+static int syscall_counter_open(struct inode *inode, struct file *file)
+{
+    return single_open(file, syscall_counter_show, NULL);
+}
+
+// File operations for the proc file
+static const struct proc_ops syscall_counter_fops = {
+    .proc_open    = syscall_counter_open,
+    .proc_read    = seq_read,
+    .proc_lseek   = seq_lseek,
+    .proc_release = single_release,
+};
+
+// Module initialization
+static int __init mod_syscall_counter_init(void)
+{
+    int ret;
+    int i;
+
+    // TODO: Initialize your data structures
+    // ADDED: Zero-initialise every counter before the kprobe goes live.
+    for (i = 0; i < MAX_SYSCALLS; i++)
+        atomic_set(&syscall_counts[i], 0);
+
+    // Create the proc entry (optional)
+    // ADDED: Uncommented to implement the optional /proc task.
+    proc_entry = proc_create(PROC_NAME, 0444, NULL, &syscall_counter_fops);
+    if (!proc_entry) {
+        printk(KERN_ALERT "Error: Could not create /proc/%s\n", PROC_NAME);
+        return -ENOMEM;
+    }
+
+    // TODO: Try registering kprobes for different entry points
+    // Hint: Loop through possible_syscall_entries[] array and try to register
+    // a kprobe for each entry point
+    // ADDED: Walk the candidate list; stop at the first successful registration.
+    memset(&kp, 0, sizeof(kp));
+    kp.pre_handler = handler_pre;
+
+    ret = -ENOENT; /* assume failure until a probe registers */
+    for (i = 0; possible_syscall_entries[i] != NULL; i++) {
+        kp.symbol_name = possible_syscall_entries[i];
+        ret = register_kprobe(&kp);
+        if (ret == 0) {
+            printk(KERN_INFO "syscall_counter: kprobe registered on '%s'\n",
+                   possible_syscall_entries[i]);
+            break;
+        }
+        printk(KERN_INFO "syscall_counter: could not register kprobe on '%s' (err=%d), trying next\n",
+               possible_syscall_entries[i], ret);
+    }
+
+    // TODO: Check if any probe was registered
+    // and remove the proc entry if no probe was registered
+    // ADDED: Clean up /proc entry if no probe could be attached.
+    if (ret != 0) {
+        printk(KERN_ALERT "syscall_counter: Failed to register any kprobe, aborting\n");
+        if (proc_entry)
+            remove_proc_entry(PROC_NAME, NULL);
+        return ret;
+    }
+
+    printk(KERN_INFO "syscall_counter: Module loaded successfully\n");
+    
+    return 0;
+}
+
+// Module cleanup
+static void __exit mod_syscall_counter_exit(void)
+{
+    int i;
+
+    // TODO: Clean up your resources
+    // ADDED: Print a final summary to dmesg before unloading.
+    printk(KERN_INFO "syscall_counter: Final counts:\n");
+    for (i = 0; i < MAX_SYSCALLS; i++) {
+        int count = atomic_read(&syscall_counts[i]);
+        if (count > 0) {
+#ifdef WANT_SYSCALL_NAMES
+            const char *name = (i < ARRAY_SIZE(syscall_names) && syscall_names[i])
+                               ? syscall_names[i] : "unknown";
+            printk(KERN_INFO "  syscall[%3d] %-20s : %d\n", i, name, count);
+#else
+            printk(KERN_INFO "  syscall[%3d] : %d\n", i, count);
+#endif
+        }
+    }
+
+    // TODO: Unregister the kprobe
+    // ADDED: Unregister the active kprobe.
+    unregister_kprobe(&kp);
+    printk(KERN_INFO "syscall_counter: kprobe unregistered\n");
+
+    // Remove the proc entry
+    // ADDED: Remove /proc/syscall_counter.
+    if (proc_entry)
+        remove_proc_entry(PROC_NAME, NULL);
+    
+    printk(KERN_INFO "syscall_counter: Module unloaded successfully\n");
+}
+
+// Module initialization and cleanup
+module_init(mod_syscall_counter_init);
+module_exit(mod_syscall_counter_exit);
