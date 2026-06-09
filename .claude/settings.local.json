@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(git -C \"/Users/tiltin/Desktop/Uni/Semester 2/Mathe_2/Mathe2_Labor\" log --oneline -5)",
+      "Bash(git -C \"/Users/tiltin/Desktop/Uni/Semester 2/Mathe_2/Mathe2_Labor\" push origin main)",
+      "Bash(git *)"
     ]
   }
 }
