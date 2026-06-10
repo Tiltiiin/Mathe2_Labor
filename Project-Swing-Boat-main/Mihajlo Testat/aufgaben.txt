@@ -1,0 +1,17 @@
+1. Aufgabe:
+Ermitteln Sie durch symbolische Berechnungen in Python für das Anfangswertproblem:
+x''(t)+3*x'(t)+2*x(t)=2*sin(t), x(0)=0, x'(0)=1,
+die allgemeine Lösung der homogenen Differenzialgleichung, die allgemeine Lösung der inhomogenen Differenzialgleichung und die Lösung des Anfangswertproblems. Skizzieren Sie die Lösung des Anfangswertproblems für t∈[0,10].
+Allgemeine Lösung der homogenen Differenzialgleichung:
+x(t)=(C_1+C_2*e^(-t))*e^(-t)
+Allgemeine Lösung der inhomogenen Differenzialgleichung:
+x(t)=C_1*e^(-2*t)+C_2*e^(-t)+sin(t)/5-3*cos(t)/5
+Lösung des Anfangswertproblems:
+x(t)=sin(t)/5-3*cos(t)/5+2*e^(-t)-7*e^(-2*t)/5
+
+2. Aufgabe:
+Ein einfaches Modell des menschlichen Herzens wird durch die gewöhnlice Differenzialgleichung:
+x''(t)=-100*(x'(t)*x^2(t)-Bx'(t)+x(t)-L_0)
+beschrieben. Dabei beschreibt x die Länge des Herzmuskels in Abhängigkeit der Zeit t, L_0 die Länge des Herzmuskels im Ruhezustand und B den Blutdruck. Simulieren Sie in Python mithilfe des Euler-Verfahrens und der Schrittweite h=0.001 den Herzschlag über eine Zeitspanne von 10 Sekunden für die Werte:
+B=1.0, L_0=0.5, x(0)=0.6, x'(0)=0.0
+Stellen Sie die Länge des Herzmuskels x in Abhängigkeit der Zeit t grafisch dar. Erstellen Sie in einem zweiten Schaubild ein Phasenporträt, d.h. stellen Sie den Verlauf der Geschwindigkeit x' über der Länge des Herzmuskels x grafisch dar.
